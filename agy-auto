@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AGY_BIN="${AGY_BIN:-}"
+if [[ -z "$AGY_BIN" ]]; then
+  AGY_BIN="$(which agy 2>/dev/null || true)"
+fi
+if [[ -z "$AGY_BIN" || ! -x "$AGY_BIN" ]]; then
+  WRAPPER_DIR="$(cd "$(dirname "$0")" && pwd)"
+  AGY_BIN="$WRAPPER_DIR/agy"
+fi
+if [[ ! -x "$AGY_BIN" ]]; then
+  printf 'agy-auto: could not find agy binary\n' >&2
+  printf 'Set AGY_BIN=/path/to/agy or ensure agy is in PATH\n' >&2
+  exit 127
+fi
+
+PROJECT_ROOT="${AGY_PROJECT_ROOT:-${PWD}}"
+
+if ! PROJECT_ROOT="$(realpath -m "$PROJECT_ROOT")"; then
+  printf 'agy-auto: failed to resolve project root: %s\n' "$PROJECT_ROOT" >&2
+  exit 2
+fi
+
+HOME_REAL="$(realpath -m "$HOME")"
+
+case "$PROJECT_ROOT" in
+  /|/home|/home/*|"$HOME_REAL")
+    if [[ "$PROJECT_ROOT" == "/" || "$PROJECT_ROOT" == "/home" || "$PROJECT_ROOT" == "$HOME_REAL" ]]; then
+      printf 'agy-auto: refusing broad project root: %s\n' "$PROJECT_ROOT" >&2
+      printf 'agy-auto: run from a project directory or set AGY_PROJECT_ROOT=/path/to/project\n' >&2
+      exit 2
+    fi
+    ;;
+esac
+
+if [[ ! -d "$PROJECT_ROOT" ]]; then
+  printf 'agy-auto: project root is not a directory: %s\n' "$PROJECT_ROOT" >&2
+  exit 2
+fi
+
+PWD_REAL="$(realpath -m "$PWD")"
+case "$PWD_REAL/" in
+  "$PROJECT_ROOT"/*) ;;
+  *)
+    printf 'agy-auto: current directory is outside project root\n' >&2
+    printf '  cwd:          %s\n' "$PWD_REAL" >&2
+    printf '  project root: %s\n' "$PROJECT_ROOT" >&2
+    exit 2
+    ;;
+esac
+
+for arg in "$@"; do
+  case "$arg" in
+    --dangerously-skip-permissions)
+      if [[ "${AGY_ALLOW_DANGEROUS_SKIP:-}" != "1" ]]; then
+        printf 'agy-auto: refusing --dangerously-skip-permissions\n' >&2
+        printf 'agy-auto: set AGY_ALLOW_DANGEROUS_SKIP=1 only for fully trusted throwaway workspaces\n' >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+args=(--sandbox --add-dir "$PROJECT_ROOT")
+
+if [[ "${AGY_ALLOW_DANGEROUS_SKIP:-}" == "1" ]]; then
+  args+=(--dangerously-skip-permissions)
+fi
+
+exec "$AGY_BIN" "${args[@]}" "$@"
